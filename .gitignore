@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+*.db
+venv_temp/
+chroma_db/
+get-pip.py

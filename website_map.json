@@ -1,0 +1,53 @@
+{
+  "timestamp": "2025-06-20T16:07:10.849880",
+  "website_map": {
+    "car accidents": {
+      "url": "https://stolmeierlaw.com/car-accidents/",
+      "subcategories": {}
+    },
+    "medical malpractice": {
+      "url": "https://stolmeierlaw.com/medical-malpractice/",
+      "subcategories": {}
+    },
+    "slip trip fall": {
+      "url": "https://stolmeierlaw.com/slip-trip-or-fall/",
+      "subcategories": {}
+    },
+    "truck accidents": {
+      "url": "https://stolmeierlaw.com/truck-accidents/",
+      "subcategories": {}
+    },
+    "18-wheeler accidents": {
+      "url": "https://stolmeierlaw.com/18-wheeler-accidents/",
+      "subcategories": {}
+    },
+    "motorcycle accidents": {
+      "url": "https://stolmeierlaw.com/motorcycle-accidents/",
+      "subcategories": {}
+    },
+    "dog bites & attacks": {
+      "url": "https://stolmeierlaw.com/dog-bites-attacks/",
+      "subcategories": {}
+    },
+    "product liability": {
+      "url": "https://stolmeierlaw.com/product-liability/",
+      "subcategories": {}
+    },
+    "wrongful death": {
+      "url": "https://stolmeierlaw.com/",
+      "subcategories": {}
+    },
+    "recent results": {
+      "url": "https://stolmeierlaw.com/recent-results/",
+      "subcategories": {}
+    },
+    "about": {
+      "url": "https://stolmeierlaw.com/about/",
+      "subcategories": {}
+    },
+    "contact us": {
+      "url": "https://stolmeierlaw.com/contact-us/",
+      "subcategories": {}
+    }
+  }
+}

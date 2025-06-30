@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stolmeier Law Chatbot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <button class="chatbot-toggle-btn" onclick="toggleChatbot()">Contact Us</button>
+    <div class="chat-container" id="chatContainer">
+        <div class="chat-header">
+            <span>Ask Stolmeier Law</span>
+            <div class="actions">
+                <button class="minimize-btn" onclick="minimizeChatbot()">−</button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input">
+            <input type="text" id="userInput" placeholder="Ask about our services or contact info...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+        <button class="quick-options-btn" onclick="toggleQuickOptions()">Show Quick Options</button>
+        <div class="chat-services-container" id="chatServices">
+            <div class="chat-services">
+                <button class="chat-option" onclick="navigateTo('Car Accidents')">Car Accidents</button>
+                <button class="chat-option" onclick="navigateTo('Medical Malpractice')">Medical Malpractice</button>
+                <button class="chat-option" onclick="navigateTo('Slip Trip Fall')">Slip Trip Fall</button>
+                <button class="chat-option" onclick="navigateTo('Truck Accidents')">Truck Accidents</button>
+                <button class="chat-option" onclick="navigateTo('18-Wheeler Accidents')">18-Wheeler</button>
+                <button class="chat-option" onclick="navigateTo('Motorcycle Accidents')">Motorcycle Accidents</button>
+                <button class="chat-option" onclick="navigateTo('Dog Bites & Attacks')">Dog Bites</button>
+                <button class="chat-option" onclick="navigateTo('Product Liability')">Product Liability</button>
+                <button class="chat-option" onclick="navigateTo('Wrongful Death')">Wrongful Death</button>
+                <button class="chat-option" onclick="navigateTo('Recent Results')">Recent Results</button>
+                <button class="chat-option" onclick="navigateTo('About')">About</button>
+                <button class="chat-option" onclick="navigateTo('Contact Us')">Contact Us</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        const sessionId = Date.now().toString();
+
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+            appendMessage('user', message);
+            input.value = '';
+            try {
+                const response = await fetch('/rag_query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, session_id: sessionId })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    appendMessage('bot', `<p>${data.error}</p>`);
+                } else {
+                    let messageContent = '<p>' + data.response.message + '</p>';
+                    messageContent += `<p>${data.helpful_prompt}</p>`;
+                    appendMessage('bot', messageContent);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                appendMessage('bot', '<p>An error occurred. Please try again later.</p>');
+            }
+        }
+
+        async function navigateTo(option) {
+            appendMessage('user', option);
+            try {
+                const response = await fetch('/rag_query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: option, session_id: sessionId })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    appendMessage('bot', `<p>${data.error}</p>`);
+                } else {
+                    let messageContent = '<p>' + data.response.message + '</p>';
+                    messageContent += `<p>${data.helpful_prompt}</p>`;
+                    appendMessage('bot', messageContent);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                appendMessage('bot', '<p>An error occurred. Please try again.</p>');
+            }
+        }
+
+        function appendMessage(sender, message) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender === 'user' ? 'user-message' : 'bot-message'}`;
+            messageDiv.innerHTML = message;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        async function loadWelcomeMessage() {
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = ''; // Clear chat on open
+            try {
+                const response = await fetch('/welcome');
+                const data = await response.json();
+                let messageContent = `<p>${data.message}</p>`;
+                appendMessage('bot', messageContent);
+            } catch (error) {
+                console.error('Error loading welcome message:', error);
+                appendMessage('bot', '<p>Welcome to Stolmeier Law! Ask about our services or contact info.</p>');
+            }
+        }
+
+        function toggleQuickOptions() {
+            const servicesContainer = document.getElementById('chatServices');
+            const button = document.querySelector('.quick-options-btn');
+            if (servicesContainer.style.display === 'none' || servicesContainer.style.display === '') {
+                servicesContainer.style.display = 'block';
+                button.textContent = 'Hide Quick Options';
+            } else {
+                servicesContainer.style.display = 'none';
+                button.textContent = 'Show Quick Options';
+            }
+        }
+
+        function toggleChatbot() {
+            const chatContainer = document.getElementById('chatContainer');
+            const toggleBtn = document.querySelector('.chatbot-toggle-btn');
+            if (chatContainer.style.display === 'none' || chatContainer.style.display === '') {
+                chatContainer.style.display = 'flex';
+                toggleBtn.style.display = 'none';
+                loadWelcomeMessage();
+            }
+        }
+
+        function minimizeChatbot() {
+            const chatContainer = document.getElementById('chatContainer');
+            const toggleBtn = document.querySelector('.chatbot-toggle-btn');
+            chatContainer.style.display = 'none';
+            toggleBtn.style.display = 'block';
+        }
+
+        // Initialize with chatbot hidden and toggle button visible
+        window.onload = function() {
+            document.getElementById('chatContainer').style.display = 'none';
+            document.querySelector('.chatbot-toggle-btn').style.display = 'block';
+        };
+
+        document.getElementById('userInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>

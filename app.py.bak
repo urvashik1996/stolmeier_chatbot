@@ -1,0 +1,337 @@
+from flask import Flask, request, jsonify, render_template
+import logging
+from langchain_community.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFacePipeline
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import Document
+from scraper import fetch_page, build_website_map, scrape_contact_info_fallback, scrape_targeted_content
+from nlp import extract_keywords_and_intent
+from database import init_db, get_content, store_content, get_contact_info, store_contact_info
+import tempfile
+import os
+import time
+import traceback
+import numpy as np
+
+app = Flask(__name__)
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Initialize global variables
+website_map = {}
+user_sessions = {}
+langchain_retriever = None
+conversational_chain = None
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="answer")
+langchain_failed = False
+
+def initialize_langchain():
+    """Initialize LangChain with website content."""
+    global langchain_retriever, conversational_chain, langchain_failed
+    logging.debug("Starting LangChain initialization...")
+
+    try:
+        target_pages = [
+            ('Car Accidents', 'https://stolmeierlaw.com/car-accidents/'),
+            ('Medical Malpractice', 'https://stolmeierlaw.com/medical-malpractice/'),
+            ('Slip, Trip or Fall', 'https://stolmeierlaw.com/slip,-trip-or-fall/'),
+            ('Truck Accidents', 'https://stolmeierlaw.com/truck-accidents/'),
+            ('18-Wheeler Accidents', 'https://stolmeierlaw.com/18-wheeler-accidents/'),
+            ('Motorcycle Accidents', 'https://stolmeierlaw.com/motorcycle-accidents/'),
+            ('Dog Bites & Attacks', 'https://stolmeierlaw.com/dog-bites-attacks/'),
+            ('Product Liability', 'https://stolmeierlaw.com/product-liability/'),
+            ('Wrongful Death', 'https://stolmeierlaw.com/'),
+            ('Recent Results', 'https://stolmeierlaw.com/recent-results/'),
+            ('About', 'https://stolmeierlaw.com/about/'),
+            ('Contact Us', 'https://stolmeierlaw.com/contact-us/')
+        ]
+
+        documents = []
+        for page_title, url in target_pages:
+            content = get_content(page_title, 'description')
+            if not content or content.startswith("Sorry,") or len(content.strip()) < 50:
+                content = scrape_targeted_content([page_title], 'description', 'init_session', url, website_map, user_sessions)
+                if content and not content.startswith("Sorry,") and len(content.strip()) > 50:
+                    store_content(page_title, url, 'description', content)
+                else:
+                    logging.warning(f"Invalid content for {page_title} at {url}. Using placeholder.")
+                    content = f"{page_title} content placeholder."
+                    store_content(page_title, url, 'description', content)
+
+            # Add causes for Car Accidents
+            if page_title == "Car Accidents":
+                causes_content = get_content(f"{page_title} - Causes", 'causes')
+                if not causes_content or causes_content.startswith("Sorry,") or len(causes_content.strip()) < 50:
+                    causes_content = scrape_targeted_content([page_title], 'causes', 'init_session', url, website_map, user_sessions)
+                    if causes_content and not causes_content.startswith("Sorry,"):
+                        store_content(f"{page_title} - Causes", url, 'causes', causes_content)
+                if causes_content and not causes_content.startswith("Sorry,"):
+                    content += f"\nCauses of Car Accidents: {causes_content}"
+
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as temp_file:
+                    temp_file.write(content)
+                    temp_file_path = temp_file.name
+            except Exception as e:
+                logging.error(f"Error creating temp file for {page_title}: {str(e)}")
+                continue
+
+            try:
+                loader = TextLoader(temp_file_path, encoding='utf-8')
+                docs = loader.load()
+                for doc in docs:
+                    doc.metadata = {"page_title": page_title, "url": url}
+                    documents.append(doc)
+            except Exception as e:
+                logging.error(f"Error loading document for {page_title}: {str(e)}")
+            finally:
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as e:
+                    logging.warning(f"Error deleting temp file {temp_file_path}: {str(e)}")
+
+        if not documents:
+            logging.error("No valid documents loaded.")
+            langchain_failed = True
+            return
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=20, length_function=len)
+        split_docs = text_splitter.split_documents(documents)
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+                texts = [doc.page_content for doc in split_docs]
+                embedded_docs = embeddings.embed_documents(texts)
+                embedded_docs = np.array(embedded_docs)
+                vector_store = FAISS.from_embeddings(
+                    list(zip(texts, embedded_docs)),
+                    embeddings,
+                    metadatas=[doc.metadata for doc in split_docs]
+                )
+                break
+            except Exception as e:
+                logging.error(f"Attempt {attempt + 1}/{max_retries} - Error initializing FAISS: {str(e)}")
+                if attempt == max_retries - 1:
+                    langchain_failed = True
+                    return
+                time.sleep(5)
+
+        for attempt in range(max_retries):
+            try:
+                llm = HuggingFacePipeline.from_model_id(
+                    model_id="google/flan-t5-small",
+                    task="text2text-generation",
+                    pipeline_kwargs={"max_length": 300}
+                )
+                break
+            except Exception as e:
+                logging.error(f"Attempt {attempt + 1}/{max_retries} - Error initializing LLM: {str(e)}")
+                if attempt == max_retries - 1:
+                    langchain_failed = True
+                    return
+                time.sleep(5)
+
+        try:
+            langchain_retriever = vector_store.as_retriever(search_kwargs={"k": 1})
+            conversational_chain = ConversationalRetrievalChain.from_llm(
+                llm=llm,
+                retriever=langchain_retriever,
+                memory=memory,
+                return_source_documents=True,
+                output_key="answer"
+            )
+            logging.debug("LangChain initialization complete.")
+            langchain_failed = False
+        except Exception as e:
+            logging.error(f"Error initializing conversational chain: {str(e)}")
+            langchain_failed = True
+            return
+    except Exception as e:
+        logging.error(f"Unexpected error in initialize_langchain: {str(e)}\n{traceback.format_exc()}")
+        langchain_failed = True
+        return
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/welcome', methods=['GET'])
+def welcome():
+    global website_map
+    website_map = build_website_map()
+    if not website_map:
+        logging.error("Failed to build website map.")
+        return jsonify({'message': 'Sorry, I couldn’t load the website sections.', 'nav_items': []})
+
+    nav_items = [
+        {
+            'title': title.capitalize(),
+            'url': data['url'],
+            'subcategories': [
+                {'title': sub_title.capitalize(), 'url': str(sub_data['url'])}
+                for sub_title, sub_data in data['subcategories'].items()
+            ] if title.lower() in ['practice areas', 'blogs'] else []
+        }
+        for title, data in website_map.items()  # Line 181 - Fixed syntax
+    ]
+
+    welcome_data = {
+        'message': 'Welcome to Stolmeier Law! Ask about our services.',
+        'nav_items': nav_items
+    }
+    return jsonify(welcome_data)
+
+@app.route('/rag_query', methods=['POST'])
+def rag_query():
+    """Handle user queries with strict prioritization and caching."""
+    try:
+        data = request.json
+        user_message = data.get('message', '').strip().lower()
+        session_id = data.get('session_id', 'default')
+        
+        if not user_message:
+            logging.error("No message received")
+            return jsonify({'error': 'Please provide a question or select a service.'})
+
+        global website_map, user_sessions, langchain_failed
+        if not website_map:
+            website_map = build_website_map()
+            if not website_map:
+                logging.error("Failed to build website map")
+                return jsonify({'error': 'Unable to access the website.'})
+
+        if langchain_failed or conversational_chain is None:
+            initialize_langchain()
+            if langchain_failed:
+                logging.error("LangChain initialization failed")
+                return jsonify({'error': 'Sorry, I’m having trouble processing your request.'})
+
+        service_titles = {title.lower(): title for title in website_map.keys()}
+        keywords, intent, corrected_message, was_corrected = extract_keywords_and_intent(user_message, session_id, website_map, user_sessions)
+        correction_note = f"<p class='correction-note'>Did you mean '{corrected_message}'?</p>" if was_corrected else ""
+
+        logging.debug(f"Processing query: {user_message}, Intent: {intent}, Keywords: {keywords}")
+
+        # Handle Contact Us
+        if intent == "contact" or user_message in ["contact us", "contact"]:
+            contact_text = get_content('Contact Us', 'contact') or get_contact_info()
+            if not contact_text or contact_text.startswith("Sorry,") or len(contact_text.strip()) < 50:
+                contact_text = scrape_targeted_content(['Contact Us'], 'contact', session_id, website_map['contact us']['url'], website_map, user_sessions)
+                if contact_text and not contact_text.startswith("Sorry,"):
+                    store_contact_info(contact_text)
+                    store_content('Contact Us', website_map['contact us']['url'], 'contact', contact_text)
+                else:
+                    contact_text = scrape_contact_info_fallback()
+                    store_contact_info(contact_text)
+                    store_content('Contact Us', website_map['contact us']['url'], 'contact', contact_text)
+            memory.clear()
+            response = f"{correction_note}<h3>Contact Information</h3><p>{contact_text}</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"
+            return jsonify({'response': response})
+
+        # Handle Feedback
+        if intent == "feedback":
+            logging.debug(f"Feedback for session {session_id}: {user_message}")
+            memory.clear()
+            return jsonify({'response': 'Thank you for your feedback! How can I assist you further?'})
+
+        # Handle Service Queries (e.g., Car Accidents, About)
+        if intent == "service" and keywords:
+            original_title = service_titles.get(keywords[0].lower(), keywords[0])
+            try:
+                content = get_content(original_title, 'description')
+                if not content or content.startswith("Sorry,") or len(content.strip()) < 50:
+                    logging.debug(f"Scraping description for {original_title} at {website_map[original_title.lower()]['url']}")
+                    content = scrape_targeted_content([original_title], 'description', session_id, website_map[original_title.lower()]['url'], website_map, user_sessions)
+                    if content and not content.startswith("Sorry,"):
+                        store_content(original_title, website_map[original_title.lower()]['url'], 'description', content)
+                    else:
+                        logging.warning(f"Scraping failed for {original_title}.")
+                        content = f"No information available for {original_title}."
+                result = conversational_chain.invoke({"question": f"Provide a summary of {original_title}"})
+                summary = result['answer'].strip()
+                if not summary or len(summary) < 10:
+                    summary = content[:500]  # Fallback to raw content if LangChain fails
+                response = f"{correction_note}<h3>{original_title}</h3><p>{summary}</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"
+                return jsonify({'response': response})
+            except Exception as e:
+                logging.error(f"Error processing service {original_title}: {str(e)}")
+                return jsonify({'response': f"{correction_note}<h3>{original_title}</h3><p>Error fetching information for {original_title}. Please try again later.</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"})
+
+        # Handle Subsection Queries (e.g., Causes of Car Accidents)
+        if intent == "subsection" and keywords:
+            matched_title = "Car Accidents" if 'Car Accidents' in keywords or 'car accidents' in user_message else None
+            subsection_query = keywords[0].lower() if keywords else None
+            if not matched_title:
+                for title in service_titles.values():
+                    if title.lower() in corrected_message.lower():
+                        matched_title = title
+                        break
+            if not matched_title:
+                matched_title = "Car Accidents"
+
+            try:
+                if subsection_query == "causes" and matched_title == "Car Accidents":
+                    content = get_content(f"{matched_title} - Causes", "causes")
+                    if not content or content.startswith("Sorry,") or len(content.strip()) < 50:
+                        logging.debug(f"Scraping causes for {matched_title} at {website_map[matched_title.lower()]['url']}")
+                        content = scrape_targeted_content(
+                            [matched_title], "causes", session_id,
+                            website_map[matched_title.lower()]['url'], website_map, user_sessions
+                        )
+                        if content and not content.startswith("Sorry,"):
+                            store_content(f"{matched_title} - Causes", website_map[matched_title.lower()]['url'], "causes", content)
+                        else:
+                            logging.warning(f"Scraping failed for {matched_title} - Causes.")
+                            response = f"{correction_note}<h3>Causes of {matched_title}</h3><p>Sorry, I couldn’t fetch the causes of {matched_title} from the website. Please try again later.</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"
+                            return jsonify({'response': response})
+                    
+                    # Parse content into a list of causes
+                    causes_list = [cause.strip() for cause in content.split(';') if cause.strip()]
+                    if not causes_list or causes_list == ['']:
+                        causes_list = [content.strip()]
+                    
+                    # Format as HTML list
+                    formatted_causes = "<ul>" + "".join(f"<li>{cause}</li>" for cause in causes_list if cause) + "</ul>"
+                    response = f"{correction_note}<h3>Causes of {matched_title}</h3>{formatted_causes}<p>Was this helpful? (Reply 'yes' or 'no')</p>"
+                    return jsonify({'response': response})
+                
+                content = get_content(f"{matched_title} - {subsection_query}", subsection_query)
+                if not content or content.startswith("Sorry,") or len(content.strip()) < 50:
+                    content = scrape_targeted_content([matched_title], subsection_query, session_id, website_map[matched_title.lower()]['url'], website_map, user_sessions)
+                    if content and not content.startswith("Sorry,"):
+                        store_content(f"{matched_title} - {subsection_query}", website_map[matched_title.lower()]['url'], subsection_query, content)
+                result = conversational_chain.invoke({"question": f"Provide information on {subsection_query} for {matched_title}"})
+                summary = result['answer'].strip()
+                response = f"{correction_note}<h3>{matched_title} - {subsection_query.capitalize()}</h3><p>{summary}</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"
+                return jsonify({'response': response})
+            except Exception as e:
+                logging.error(f"Error processing subsection query {matched_title} - {subsection_query}: {str(e)}")
+                response = f"{correction_note}<h3>{matched_title} - {subsection_query.capitalize()}</h3><p>Error fetching {subsection_query} for {matched_title}. Please try again later.</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"
+                return jsonify({'response': response})
+
+        # General Query Fallback
+        try:
+            result = conversational_chain.invoke({'question': user_message})
+            answer = result['answer'].strip()
+            if not answer or len(answer) < 10:
+                answer = "Sorry, I couldn't find relevant information. Please provide more details."
+            response = f"{correction_note}<h3>Response</h3><p>{answer}</p><p>Was this helpful? (Reply 'yes' or 'no')</p>"
+            return jsonify({'response': response})
+        except Exception as e:
+            logging.error(f"Error in general query '{user_message}': {str(e)}")
+            memory.clear()
+            return jsonify({'response': f"{correction_note}<h3>Response</h3><p>Sorry, I couldn't understand your request. Could you provide more details?</p>"})
+    except Exception as e:
+        logging.error(f"Unexpected error in rag_query: {str(e)}")
+        return jsonify({'error': 'An unexpected error occurred. Please try again.'})
+
+if __name__ == '__main__':
+    init_db()
+    initialize_langchain()
+    app.run(debug=True)

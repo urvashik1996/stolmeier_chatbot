@@ -1,0 +1,113 @@
+import sqlite3
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def init_db():
+    """Initialize SQLite database."""
+    try:
+        conn = sqlite3.connect('stolmeier_law.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS content (
+                page_title TEXT,
+                url TEXT,
+                content_type TEXT,
+                content TEXT,
+                PRIMARY KEY (page_title, content_type)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contact_info (
+                id INTEGER PRIMARY KEY,
+                contact_text TEXT
+            )
+        ''')
+        conn.commit()
+        logging.debug("Database initialized")
+    except Exception as e:
+        logging.error("Error initializing database: {}".format(e))
+    finally:
+        conn.close()
+
+def get_content(page_title, content_type):
+    """Retrieve cached content."""
+    try:
+        conn = sqlite3.connect('stolmeier_law.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT content FROM content WHERE page_title = ? AND content_type = ?', (page_title, content_type))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logging.error("Error getting content for {}: {}".format(page_title, e))
+        return None
+    finally:
+        conn.close()
+
+def store_content(page_title, url, content_type, content):
+    """Store content in database."""
+    try:
+        conn = sqlite3.connect('stolmeier_law.db')
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR REPLACE INTO content (page_title, url, content_type, content) VALUES (?, ?, ?, ?)',
+                       (page_title, url, content_type, content))
+        conn.commit()
+        logging.debug("Stored content for {}".format(page_title))
+    except Exception as e:
+        logging.error("Error storing content for {}: {}".format(page_title, e))
+    finally:
+        conn.close()
+
+def get_contact_info():
+    """Retrieve cached contact info."""
+    try:
+        conn = sqlite3.connect('stolmeier_law.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT contact_text FROM contact_info WHERE id = 1')
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        logging.error("Error getting contact info: {}".format(e))
+        return None
+    finally:
+        conn.close()
+
+def store_contact_info(contact_text):
+    """Store contact info."""
+    try:
+        conn = sqlite3.connect('stolmeier_law.db')
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR REPLACE INTO contact_info (id, contact_text) VALUES (1, ?)', (contact_text,))
+        conn.commit()
+        logging.debug("Stored contact info")
+    except Exception as e:
+        logging.error("Error storing contact info: {}".format(e))
+    finally:
+        conn.close()
+
+def clear_database():
+    """Clear corrupted entries from the database."""
+    try:
+        conn = sqlite3.connect('stolmeier_law.db')
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM content 
+            WHERE page_title IN ('Contact Us', 'Car Accidents', 'Car Accidents - Causes') 
+            OR content LIKE 'Sorry,%' 
+            OR length(content) < 10
+        """)
+        cursor.execute("""
+            DELETE FROM contact_info 
+            WHERE length(contact_text) < 10 
+            OR contact_text LIKE 'Sorry,%'
+        """)
+        conn.commit()
+        logging.info("Database cleared successfully.")
+        cursor.execute("SELECT * FROM content WHERE page_title IN ('Contact Us', 'Car Accidents', 'Car Accidents - Causes')")
+        logging.info(f"Content table: {cursor.fetchall()}")
+        cursor.execute("SELECT * FROM contact_info")
+        logging.info(f"Contact_info table: {cursor.fetchall()}")
+    except Exception as e:
+        logging.error(f"Error clearing database: {e}")
+    finally:
+        conn.close()
