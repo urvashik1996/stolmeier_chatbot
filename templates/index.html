@@ -40,13 +40,18 @@
     </div>
     <script>
         const sessionId = Date.now().toString();
+        const chatContainer = document.getElementById('chatContainer');
+        const toggleBtn = document.querySelector('.chatbot-toggle-btn');
+        const userInput = document.getElementById('userInput');
+        const chatMessages = document.getElementById('chatMessages');
+        const servicesContainer = document.getElementById('chatServices');
+        const quickOptionsBtn = document.querySelector('.quick-options-btn');
 
         async function sendMessage() {
-            const input = document.getElementById('userInput');
-            const message = input.value.trim();
+            const message = userInput.value.trim();
             if (!message) return;
             appendMessage('user', message);
-            input.value = '';
+            userInput.value = '';
             appendMessage('bot', 'Bot is typing...');
             try {
                 const response = await fetch('/rag_query', {
@@ -65,10 +70,12 @@
                     }
                     appendMessage('bot', messageContent);
                 }
+                servicesContainer.classList.remove('hidden'); // Show Quick Options after response
             } catch (error) {
                 console.error('Error:', error);
                 document.querySelector('.bot-message:last-child').remove(); // Remove typing message
                 appendMessage('bot', '<p>An error occurred. Please try again later.</p>');
+                servicesContainer.classList.remove('hidden'); // Show Quick Options on error
             }
         }
 
@@ -92,15 +99,16 @@
                     }
                     appendMessage('bot', messageContent);
                 }
+                servicesContainer.classList.remove('hidden'); // Show Quick Options after response
             } catch (error) {
                 console.error('Error:', error);
                 document.querySelector('.bot-message:last-child').remove(); // Remove typing message
                 appendMessage('bot', '<p>An error occurred. Please try again.</p>');
+                servicesContainer.classList.remove('hidden'); // Show Quick Options on error
             }
         }
 
         function appendMessage(sender, message) {
-            const chatMessages = document.getElementById('chatMessages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender === 'user' ? 'user-message' : 'bot-message'}`;
             messageDiv.innerHTML = message;
@@ -109,34 +117,31 @@
         }
 
         async function loadWelcomeMessage() {
-            const chatMessages = document.getElementById('chatMessages');
             chatMessages.innerHTML = ''; // Clear chat on open
             try {
                 const response = await fetch('/welcome');
                 const data = await response.json();
                 let messageContent = `<p>${data.message}</p>`;
                 appendMessage('bot', messageContent);
+                servicesContainer.classList.remove('hidden'); // Ensure Quick Options visible
             } catch (error) {
                 console.error('Error loading welcome message:', error);
                 appendMessage('bot', '<p>Welcome to Stolmeier Law! Ask about our services or contact info.</p>');
+                servicesContainer.classList.remove('hidden'); // Ensure Quick Options visible
             }
         }
 
         function toggleQuickOptions() {
-            const servicesContainer = document.getElementById('chatServices');
-            const button = document.querySelector('.quick-options-btn');
-            if (servicesContainer.style.display === 'none' || servicesContainer.style.display === '') {
-                servicesContainer.style.display = 'block';
-                button.textContent = 'Hide Quick Options';
+            if (servicesContainer.classList.contains('hidden')) {
+                servicesContainer.classList.remove('hidden');
+                quickOptionsBtn.textContent = 'Hide Quick Options';
             } else {
-                servicesContainer.style.display = 'none';
-                button.textContent = 'Show Quick Options';
+                servicesContainer.classList.add('hidden');
+                quickOptionsBtn.textContent = 'Show Quick Options';
             }
         }
 
         function toggleChatbot() {
-            const chatContainer = document.getElementById('chatContainer');
-            const toggleBtn = document.querySelector('.chatbot-toggle-btn');
             if (chatContainer.style.display === 'none' || chatContainer.style.display === '') {
                 chatContainer.style.display = 'flex';
                 toggleBtn.style.display = 'none';
@@ -145,18 +150,24 @@
         }
 
         function minimizeChatbot() {
-            const chatContainer = document.getElementById('chatContainer');
-            const toggleBtn = document.querySelector('.chatbot-toggle-btn');
             chatContainer.style.display = 'none';
             toggleBtn.style.display = 'block';
+            servicesContainer.classList.remove('hidden'); // Reset Quick Options on minimize
+            quickOptionsBtn.textContent = 'Show Quick Options';
         }
 
         window.onload = function() {
-            document.getElementById('chatContainer').style.display = 'none';
-            document.querySelector('.chatbot-toggle-btn').style.display = 'block';
+            chatContainer.style.display = 'none';
+            toggleBtn.style.display = 'block';
+            servicesContainer.classList.remove('hidden'); // Ensure Quick Options visible initially
         };
 
-        document.getElementById('userInput').addEventListener('keypress', function(e) {
+        userInput.addEventListener('input', () => {
+            servicesContainer.classList.add('hidden'); // Hide Quick Options on input
+            quickOptionsBtn.textContent = 'Show Quick Options';
+        });
+
+        userInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
     </script>

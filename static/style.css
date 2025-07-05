@@ -228,7 +228,14 @@ body {
 .chat-services-container {
     background: #ffffff;
     border-top: 1px solid #e0e0e0;
-    display: none;
+    transition: opacity 0.3s ease, max-height 0.3s ease;
+    max-height: 200px;
+    overflow: hidden;
+}
+
+.chat-services-container.hidden {
+    opacity: 0;
+    max-height: 0;
 }
 
 .chat-services {
