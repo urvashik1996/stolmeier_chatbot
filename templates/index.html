@@ -34,7 +34,7 @@
                 <button class="chat-option" onclick="navigateTo('Wrongful Death')">Wrongful Death</button>
                 <button class="chat-option" onclick="navigateTo('Recent Results')">Recent Results</button>
                 <button class="chat-option" onclick="navigateTo('About')">About</button>
-                <button class="chat-option" onclick="navigateTo('Contact Us')">Contact Us</button>
+                <button class="chat-option" onclick="navigateTo('Contact')">Contact</button>
             </div>
         </div>
     </div>
@@ -47,6 +47,7 @@
             if (!message) return;
             appendMessage('user', message);
             input.value = '';
+            appendMessage('bot', 'Bot is typing...');
             try {
                 const response = await fetch('/rag_query', {
                     method: 'POST',
@@ -54,21 +55,26 @@
                     body: JSON.stringify({ message, session_id: sessionId })
                 });
                 const data = await response.json();
+                document.querySelector('.bot-message:last-child').remove(); // Remove typing message
                 if (data.error) {
                     appendMessage('bot', `<p>${data.error}</p>`);
                 } else {
                     let messageContent = '<p>' + data.response.message + '</p>';
-                    messageContent += `<p>${data.helpful_prompt}</p>`;
+                    if (data.helpful_prompt) {
+                        messageContent += `<p>${data.helpful_prompt}</p>`;
+                    }
                     appendMessage('bot', messageContent);
                 }
             } catch (error) {
                 console.error('Error:', error);
+                document.querySelector('.bot-message:last-child').remove(); // Remove typing message
                 appendMessage('bot', '<p>An error occurred. Please try again later.</p>');
             }
         }
 
         async function navigateTo(option) {
             appendMessage('user', option);
+            appendMessage('bot', 'Bot is typing...');
             try {
                 const response = await fetch('/rag_query', {
                     method: 'POST',
@@ -76,15 +82,19 @@
                     body: JSON.stringify({ message: option, session_id: sessionId })
                 });
                 const data = await response.json();
+                document.querySelector('.bot-message:last-child').remove(); // Remove typing message
                 if (data.error) {
                     appendMessage('bot', `<p>${data.error}</p>`);
                 } else {
                     let messageContent = '<p>' + data.response.message + '</p>';
-                    messageContent += `<p>${data.helpful_prompt}</p>`;
+                    if (data.helpful_prompt) {
+                        messageContent += `<p>${data.helpful_prompt}</p>`;
+                    }
                     appendMessage('bot', messageContent);
                 }
             } catch (error) {
                 console.error('Error:', error);
+                document.querySelector('.bot-message:last-child').remove(); // Remove typing message
                 appendMessage('bot', '<p>An error occurred. Please try again.</p>');
             }
         }
@@ -141,7 +151,6 @@
             toggleBtn.style.display = 'block';
         }
 
-        // Initialize with chatbot hidden and toggle button visible
         window.onload = function() {
             document.getElementById('chatContainer').style.display = 'none';
             document.querySelector('.chatbot-toggle-btn').style.display = 'block';
